@@ -3,6 +3,7 @@ This script is a sample for fetching objects from an S3 Bucket.
 Performing actions on the object e.g. incase of PDF get no. of pages
 Persisting results to a DB
 """
+from fileinput import filename
 import os
 import glob
 import sys
@@ -34,7 +35,7 @@ conf = {
 
 flags = {}
 
-s3_session = boto3.Session(profile_name="")  # Check ~/.aws/credentials ,  ~/.aws/config
+s3_session = boto3.Session(profile_name="delta")
 s3_client = s3_session.client("s3")
 s3_bucket = s3_session.resource("s3")
 
@@ -79,11 +80,6 @@ def persist_to_db(records: T.List[T.OrderedDict]):
     cursor.close()
 
 
-def get_pdf_page_count(record):
-    """
-    Get file location from record. Analyse PDF and add value to object.
-    """
-
 def get_file_names_from_db(limit=10000):
     """
     Modify for ORDER BY, SKIP etc.
@@ -101,29 +97,33 @@ def create_record() -> T.OrderedDict:
     """
     Should have same fields as destination db table columns
     """
-    return OrderedDict({"s3_path": None, "s3_bucket": None, "file_name": None})
+    return OrderedDict(
+        {"s3_path": conf["s3_path"], "s3_bucket": conf["s3_bucket"], "file_name": None}
+    )
+
+
+def clean_record(record):
+    record.pop("file_path")
+
+
+def modify_file_path(record, file_name):
+    record["file_name"] = file_name
+    record["local_path"] = conf["download_dir"] + "/" + file_name
 
 
 def main():
     logger.info("Started Execution")
     for i in iterate_bucket_items(bucket=conf["s3_bucket"]):
-        record = create_record()
         if i["Size"] == 0:
             continue
-        record["file_name"] = str.replace(
-            i["Key"], conf["s3_path"], conf["download_dir"]
-        )
-        s3_bucket.download_file(i["Key"], record["file_name"])
+        record = create_record()
+        modify_file_path(record, str.replace(i["Key"], conf["s3_path"] + "/", ""))
+        s3_bucket.download_file(i["Key"], record["local_path"])
         logger.info("Downloaded {}".format(record["file_name"]))
-        # Perform operations on record. 
-        # Pipeline should be like a DAG 
-        # get_pdf_page_count(record)
+        # Perform operations on record like a DAG workflow
+        clean_record(record)
         # Persist per loop or as a batch.
-        # persist_to_db([record])
+        persist_to_db([record])
 
     logger.info("Finished Execution")
     exit()
-
-
-if __name__ == "__main__":
-    main()
